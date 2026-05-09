@@ -11,7 +11,7 @@ import toast, { Toaster } from 'react-hot-toast';
 // ─── Read backend URL from environment variable ───────────────────────────────
 // Local:      http://localhost:3000   (set in frontend/.env)
 // Production: https://your-app.onrender.com
-const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+const SOCKET_URL = 'https://youtube-watch-party-backend-tfdz.onrender.com';
 
 // ─── YouTube URL parser ───────────────────────────────────────────────────────
 function extractVideoId(url) {

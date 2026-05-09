@@ -69,143 +69,120 @@ function Room() {
   }, []);
 
   // ── Socket setup ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    const socket = io(SOCKET_URL, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-    });
-
-    socketRef.current = socket;
-    setMySocketId(socket.id);
-
-    socket.on('connect', () => {
-      setSyncStatus('synced');
-      setMySocketId(socket.id);
-      socket.emit('join_room', { roomId, username });
-    });
-
-    socket.on('connect_error', () => setSyncStatus('disconnected'));
-    socket.on('disconnect', () => setSyncStatus('disconnected'));
-
-    socket.on('reconnect', () => {
-      setSyncStatus('synced');
-      socket.emit('join_room', { roomId, username });
-    });
-
-    // ── Server → Client events ─────────────────────────────────────────────
-
-    // Called on join: tells us our role
-    socket.on('role_assigned', (data) => {
-      const role = data.role || data.newRole;
-
-      // Update current user's role if this event is for us
-      if (!data.userId || data.userId === socket.id) {
-        if (role) {
-          setUserRole(role);
-          toast.success(`You joined as ${role} 🎉`);
-        }
+useEffect(() => {
+  console.log('🟢 Component mounted, roomId:', roomId);
+  console.log('🟢 Username:', username);
+  
+  if (!roomId) {
+    console.error('❌ No roomId found!');
+    navigate('/');
+    return;
+  }
+  
+  setSyncStatus('connecting');
+  
+  const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+  console.log('🔌 Connecting to backend:', SOCKET_URL);
+  
+  const newSocket = io(SOCKET_URL, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+    timeout: 20000
+  });
+  
+  socketRef.current = newSocket;
+  
+  newSocket.on('connect', () => {
+    console.log('✅ Socket connected!');
+    setSyncStatus('synced');
+    newSocket.emit('join_room', { roomId, username });
+  });
+  
+  newSocket.on('connect_error', (error) => {
+    console.error('❌ Connection error:', error);
+    setSyncStatus('disconnected');
+  });
+  
+  newSocket.on('disconnect', () => {
+    console.log('❌ Socket disconnected');
+    setSyncStatus('disconnected');
+  });
+  
+  newSocket.on('role_assigned', (data) => {
+    console.log('🎭 Role assigned:', data);
+    const role = data.role || data.newRole;
+    if (role) setUserRole(role);
+    if (data.participants) setParticipants(data.participants);
+    toast.success(`You are the ${role}!`);
+  });
+  
+  newSocket.on('sync_state', (state) => {
+    console.log('🔄 Sync state:', state);
+    if (state.videoId && playerRef.current) {
+      if (playerRef.current.getVideoData()?.video_id !== state.videoId) {
+        playerRef.current.loadVideoById(state.videoId);
       }
-
-      if (data.participants) setParticipants(data.participants);
-      if (data.activity) addActivity(data.activity);
-    });
-
-    // Full video state when joining mid-session
-    socket.on('sync_state', (state) => {
-      videoIdRef.current = state.videoId;
-      const player = playerRef.current;
-      if (player && player.loadVideoById) {
-        isRemoteAction.current = true;
-        if (state.isPlaying) {
-          player.loadVideoById({ videoId: state.videoId, startSeconds: state.currentTime || 0 });
-        } else {
-          player.cueVideoById({ videoId: state.videoId, startSeconds: state.currentTime || 0 });
-        }
-      } else {
-        // Player not ready yet — store and apply in onPlayerReady
-        pendingSyncRef.current = state;
-      }
-    });
-
-    socket.on('activity_feed', (feed) => setActivities(feed || []));
-
-    socket.on('user_joined', ({ participants: p, activity }) => {
-      setParticipants(p);
-      addActivity(activity);
-    });
-
-    socket.on('user_left', ({ participants: p, activity }) => {
-      setParticipants(p);
-      addActivity(activity);
-    });
-
-    // ── Playback events ────────────────────────────────────────────────────
-
-    socket.on('play', ({ time, activity }) => {
-      addActivity(activity);
-      const player = playerRef.current;
-      if (!player) return;
-      isRemoteAction.current = true;
-      if (time !== undefined) {
-        player.seekTo(time, true);
-        lastTimeRef.current = time;
-      }
-      player.playVideo();
-    });
-
-    socket.on('pause', ({ time, activity }) => {
-      addActivity(activity);
-      const player = playerRef.current;
-      if (!player) return;
-      isRemoteAction.current = true;
-      clearInterval(seekPollRef.current);
-      if (time !== undefined) {
-        player.seekTo(time, true);
-        lastTimeRef.current = time;
-      }
-      player.pauseVideo();
-    });
-
-    socket.on('seek', ({ time, activity }) => {
-      addActivity(activity);
-      const player = playerRef.current;
-      if (!player) return;
-      isRemoteAction.current = true;
-      player.seekTo(time, true);
-      lastTimeRef.current = time;
-    });
-
-    socket.on('change_video', ({ videoId, activity }) => {
-      addActivity(activity);
-      videoIdRef.current = videoId;
-      const player = playerRef.current;
-      if (player && player.loadVideoById) {
-        isRemoteAction.current = true;
-        player.loadVideoById(videoId);
-      }
-      toast.success('Video changed!');
-    });
-
-    socket.on('participant_removed', ({ participants: p, activity }) => {
-      setParticipants(p);
-      addActivity(activity);
-    });
-
-    // We were kicked
-    socket.on('kicked_from_room', () => {
-      toast.error('You were removed from the room');
-      setTimeout(() => navigate('/'), 2000);
-    });
-
-    socket.on('error', ({ message }) => toast.error(message));
-
-    return () => {
-      socket.disconnect();
-      socketRef.current = null;
-    };
-  }, [roomId, username, navigate, addActivity]);
+      if (state.isPlaying) playerRef.current.playVideo();
+      else playerRef.current.pauseVideo();
+      if (state.currentTime) playerRef.current.seekTo(state.currentTime, true);
+    }
+    videoIdRef.current = state.videoId;
+  });
+  
+  newSocket.on('activity_feed', (feed) => {
+    setActivities(feed || []);
+  });
+  
+  newSocket.on('user_joined', ({ participants, activity }) => {
+    setParticipants(participants);
+    if (activity) addActivity(activity);
+    toast.success(activity?.message);
+  });
+  
+  newSocket.on('user_left', ({ participants, activity }) => {
+    setParticipants(participants);
+    if (activity) addActivity(activity);
+  });
+  
+  newSocket.on('play', ({ activity }) => {
+    isRemoteAction.current = true;
+    if (playerRef.current) playerRef.current.playVideo();
+    if (activity) addActivity(activity);
+    setTimeout(() => { isRemoteAction.current = false; }, 100);
+  });
+  
+  newSocket.on('pause', ({ activity }) => {
+    isRemoteAction.current = true;
+    if (playerRef.current) playerRef.current.pauseVideo();
+    if (activity) addActivity(activity);
+    setTimeout(() => { isRemoteAction.current = false; }, 100);
+  });
+  
+  newSocket.on('seek', ({ time, activity }) => {
+    isRemoteAction.current = true;
+    if (playerRef.current) playerRef.current.seekTo(time, true);
+    if (activity) addActivity(activity);
+    setTimeout(() => { isRemoteAction.current = false; }, 100);
+  });
+  
+  newSocket.on('change_video', ({ videoId, activity }) => {
+    isRemoteAction.current = true;
+    if (playerRef.current) playerRef.current.loadVideoById(videoId);
+    if (activity) addActivity(activity);
+    toast.success('Video changed!');
+    setTimeout(() => { isRemoteAction.current = false; }, 100);
+  });
+  
+  newSocket.on('error', ({ message }) => {
+    toast.error(message);
+  });
+  
+  return () => {
+    if (newSocket) newSocket.disconnect();
+  };
+}, [roomId, username, navigate, addActivity]);
 
   // ── YouTube IFrame API setup ───────────────────────────────────────────────
   // The IFrame API replaces the div#yt-player element with an <iframe>.

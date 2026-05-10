@@ -79,22 +79,35 @@ socket.emit('play', {time}) ──→ RoomManager
                                                       player.playVideo()
 ```
 
+### How WebSockets Enable Real-time Sync
+1. User action (play/pause/seek/change_video) → Client emits Socket.IO event
+2. Server validates role permissions (host/moderator only)
+3. Server updates room state and broadcasts to all participants
+4. Clients receive event and update YouTube player accordingly
+
+### Tech Stack
+- **Frontend:** React + Vite + Tailwind CSS
+- **Backend:** Node.js + Express + Socket.IO
+- **Deployment:** Vercel (frontend) + Render (backend)
+
+### Role-Based Access Control
+- **Host:** Full control (play/pause/seek/change video/assign roles/remove participants)
+- **Moderator:** Playback control only (if implemented)
+- **Participant:** Watch only
+
+### Features Implemented
+- ✅ Create/join rooms with unique codes
+- ✅ Real-time video synchronization
+- ✅ Change YouTube videos via URL
+- ✅ Role-based access control
+- ✅ Activity feed
+- ✅ Participants list
+- ✅ Copy invite link
+- ✅ Connection status indicator
+- ✅ Chat system (bonus)
+  
 Socket.IO handles all real-time events. The YouTube IFrame API gives us
 `playVideo()`, `pauseVideo()`, `seekTo()`, and `onStateChange` callbacks.
 The server validates permissions before broadcasting any playback event.
 
 ---
-
-## Live URL
-
-- **Frontend:** https://youtube-watch-party-gcut.vercel.app
-- **Backend:** https://youtube-watch-party-backend-tfdz.onrender.com
-
-## How to Test
-
-1. Open the frontend URL
-2. Enter your name
-3. Click "Create New Room"
-4. Share the room URL with friends
-5. Paste any YouTube URL and click "Change Video"
-6. Everyone in the room watches together in sync!

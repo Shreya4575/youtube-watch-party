@@ -1,28 +1,19 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import {
-  FaUsers, FaCrown, FaShieldAlt, FaUser,
-  FaCopy, FaSignal, FaRegClock, FaCheckCircle,
-  FaExclamationTriangle, FaTrash, FaUserShield,
-} from 'react-icons/fa';
+import { FaUsers, FaCrown, FaShieldAlt, FaUser, FaCopy } from 'react-icons/fa';
 import toast, { Toaster } from 'react-hot-toast';
 
-// ─── Read backend URL from environment variable ───────────────────────────────
-// Local:      http://localhost:3000   (set in frontend/.env)
-// Production: https://your-app.onrender.com
+// HARDCODED BACKEND URL
 const SOCKET_URL = 'https://youtube-watch-party-backend-tfdz.onrender.com';
 
-// ─── YouTube URL parser ───────────────────────────────────────────────────────
 function extractVideoId(url) {
   if (!url) return null;
-  if (url.length === 11 && !url.includes('/')) return url; // bare ID
-
+  if (url.length === 11 && !url.includes('/')) return url;
   const patterns = [
-    /[?&]v=([^&]{11})/,            // youtube.com/watch?v=
-    /youtu\.be\/([^?]{11})/,       // youtu.be/
-    /shorts\/([^?]{11})/,          // youtube.com/shorts/
-    /embed\/([^?]{11})/,           // youtube.com/embed/
+    /[?&]v=([^&]{11})/,
+    /youtu\.be\/([^?]{11})/,
+    /shorts\/([^?]{11})/,
   ];
   for (const re of patterns) {
     const m = url.match(re);
@@ -31,535 +22,220 @@ function extractVideoId(url) {
   return null;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
 function Room() {
   const { roomId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-
-  const username =
-    new URLSearchParams(location.search).get('username') ||
-    localStorage.getItem('watchPartyUsername') ||
-    'Anonymous';
-
-  // ── State ──────────────────────────────────────────────────────────────────
+  
+  const username = new URLSearchParams(location.search).get('username') || 
+                   localStorage.getItem('watchPartyUsername') || 'Anonymous';
+  
   const [participants, setParticipants] = useState([]);
   const [userRole, setUserRole] = useState('loading');
   const [activities, setActivities] = useState([]);
   const [syncStatus, setSyncStatus] = useState('connecting');
   const [newVideoUrl, setNewVideoUrl] = useState('');
-  const [mySocketId, setMySocketId] = useState(null);
-
-  // ── Refs (don't cause re-renders) ─────────────────────────────────────────
+  const [currentVideoUrl, setCurrentVideoUrl] = useState('https://www.youtube.com/embed/dQw4w9WgXcQ');
+  
   const socketRef = useRef(null);
-  const playerRef = useRef(null);         // YouTube IFrame player instance
-  const isRemoteAction = useRef(false);   // true while applying remote events
-  const lastTimeRef = useRef(0);          // last polled video time (seek detection)
-  const seekPollRef = useRef(null);       // interval ID for seek polling
-  const pendingSyncRef = useRef(null);    // sync_state received before player ready
-  const videoIdRef = useRef('dQw4w9WgXcQ');
+  const isConnectedRef = useRef(false);
 
-  // Handler ref — allows the YT player callback to always call the latest version
-  const stateChangeHandlerRef = useRef(null);
-
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-  const addActivity = useCallback((activity) => {
-    if (!activity) return;
-    setActivities((prev) => [activity, ...prev].slice(0, 50));
-  }, []);
-
-  // ── Socket setup ─────────────────────────────────────────────────────────
-useEffect(() => {
-  console.log('🟢 Component mounted, roomId:', roomId);
-  console.log('🟢 Username:', username);
-  
-  if (!roomId) {
-    console.error('❌ No roomId found!');
-    navigate('/');
-    return;
-  }
-  
-  setSyncStatus('connecting');
-  
-  const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
-  console.log('🔌 Connecting to backend:', SOCKET_URL);
-  
-  const newSocket = io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
-    reconnection: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000,
-    timeout: 20000
-  });
-  
-  socketRef.current = newSocket;
-  
-  newSocket.on('connect', () => {
-    console.log('✅ Socket connected!');
-    setSyncStatus('synced');
-    newSocket.emit('join_room', { roomId, username });
-  });
-  
-  newSocket.on('connect_error', (error) => {
-    console.error('❌ Connection error:', error);
-    setSyncStatus('disconnected');
-  });
-  
-  newSocket.on('disconnect', () => {
-    console.log('❌ Socket disconnected');
-    setSyncStatus('disconnected');
-  });
-  
-  newSocket.on('role_assigned', (data) => {
-    console.log('🎭 Role assigned:', data);
-    const role = data.role || data.newRole;
-    if (role) setUserRole(role);
-    if (data.participants) setParticipants(data.participants);
-    toast.success(`You are the ${role}!`);
-  });
-  
-  newSocket.on('sync_state', (state) => {
-    console.log('🔄 Sync state:', state);
-    if (state.videoId && playerRef.current) {
-      if (playerRef.current.getVideoData()?.video_id !== state.videoId) {
-        playerRef.current.loadVideoById(state.videoId);
-      }
-      if (state.isPlaying) playerRef.current.playVideo();
-      else playerRef.current.pauseVideo();
-      if (state.currentTime) playerRef.current.seekTo(state.currentTime, true);
-    }
-    videoIdRef.current = state.videoId;
-  });
-  
-  newSocket.on('activity_feed', (feed) => {
-    setActivities(feed || []);
-  });
-  
-  newSocket.on('user_joined', ({ participants, activity }) => {
-    setParticipants(participants);
-    if (activity) addActivity(activity);
-    toast.success(activity?.message);
-  });
-  
-  newSocket.on('user_left', ({ participants, activity }) => {
-    setParticipants(participants);
-    if (activity) addActivity(activity);
-  });
-  
-  newSocket.on('play', ({ activity }) => {
-    isRemoteAction.current = true;
-    if (playerRef.current) playerRef.current.playVideo();
-    if (activity) addActivity(activity);
-    setTimeout(() => { isRemoteAction.current = false; }, 100);
-  });
-  
-  newSocket.on('pause', ({ activity }) => {
-    isRemoteAction.current = true;
-    if (playerRef.current) playerRef.current.pauseVideo();
-    if (activity) addActivity(activity);
-    setTimeout(() => { isRemoteAction.current = false; }, 100);
-  });
-  
-  newSocket.on('seek', ({ time, activity }) => {
-    isRemoteAction.current = true;
-    if (playerRef.current) playerRef.current.seekTo(time, true);
-    if (activity) addActivity(activity);
-    setTimeout(() => { isRemoteAction.current = false; }, 100);
-  });
-  
-  newSocket.on('change_video', ({ videoId, activity }) => {
-    isRemoteAction.current = true;
-    if (playerRef.current) playerRef.current.loadVideoById(videoId);
-    if (activity) addActivity(activity);
-    toast.success('Video changed!');
-    setTimeout(() => { isRemoteAction.current = false; }, 100);
-  });
-  
-  newSocket.on('error', ({ message }) => {
-    toast.error(message);
-  });
-  
-  return () => {
-    if (newSocket) newSocket.disconnect();
-  };
-}, [roomId, username, navigate, addActivity]);
-
-  // ── YouTube IFrame API setup ───────────────────────────────────────────────
-  // The IFrame API replaces the div#yt-player element with an <iframe>.
-  // We cannot use a plain <iframe> because we need JS control (play/pause/seek).
+  // Socket connection - runs ONCE
   useEffect(() => {
-    const createPlayer = () => {
-      if (playerRef.current) return; // Already created
-
-      playerRef.current = new window.YT.Player('yt-player', {
-        videoId: videoIdRef.current,
-        width: '100%',
-        height: '100%',
-        playerVars: {
-          autoplay: 0,
-          rel: 0,
-          modestbranding: 1,
-        },
-        events: {
-          onReady: () => {
-            // Apply any sync_state that arrived before the player was ready
-            const pending = pendingSyncRef.current;
-            if (pending) {
-              isRemoteAction.current = true;
-              if (pending.isPlaying) {
-                playerRef.current.loadVideoById({
-                  videoId: pending.videoId,
-                  startSeconds: pending.currentTime || 0,
-                });
-              } else {
-                playerRef.current.cueVideoById({
-                  videoId: pending.videoId,
-                  startSeconds: pending.currentTime || 0,
-                });
-              }
-              pendingSyncRef.current = null;
-            }
-          },
-          // Route all state changes through the ref so we always use
-          // the latest version of the handler without recreating the player
-          onStateChange: (e) => {
-            if (stateChangeHandlerRef.current) {
-              stateChangeHandlerRef.current(e);
-            }
-          },
-        },
-      });
-    };
-
-    if (window.YT && window.YT.Player) {
-      // API already loaded (e.g. navigated back to this page)
-      createPlayer();
-    } else if (!document.getElementById('yt-api-script')) {
-      // First time — inject the script tag
-      const script = document.createElement('script');
-      script.id = 'yt-api-script';
-      script.src = 'https://www.youtube.com/iframe_api';
-      document.head.appendChild(script);
-      window.onYouTubeIframeAPIReady = createPlayer;
-    } else {
-      // Script tag exists but API not ready yet (still loading)
-      window.onYouTubeIframeAPIReady = createPlayer;
-    }
-
+    console.log('🔌 Creating socket connection...');
+    
+    const socket = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+    });
+    
+    socketRef.current = socket;
+    
+    socket.on('connect', () => {
+      console.log('✅ Socket connected! ID:', socket.id);
+      setSyncStatus('synced');
+      socket.emit('join_room', { roomId, username });
+    });
+    
+    socket.on('connect_error', (err) => {
+      console.error('❌ Connection error:', err);
+      setSyncStatus('disconnected');
+    });
+    
+    socket.on('disconnect', (reason) => {
+      console.log('❌ Disconnected:', reason);
+      setSyncStatus('disconnected');
+    });
+    
+    socket.on('role_assigned', (data) => {
+      console.log('🎭 Role assigned:', data);
+      const role = data.role || data.newRole;
+      if (role) setUserRole(role);
+      if (data.participants) setParticipants(data.participants);
+      toast.success(`You are the ${role}!`);
+    });
+    
+    socket.on('sync_state', (state) => {
+      console.log('🔄 Sync state:', state);
+      if (state.videoId) {
+        setCurrentVideoUrl(`https://www.youtube.com/embed/${state.videoId}?autoplay=0`);
+      }
+    });
+    
+    socket.on('activity_feed', (feed) => {
+      setActivities(feed || []);
+    });
+    
+    socket.on('user_joined', ({ participants: updated, activity }) => {
+      setParticipants(updated);
+      if (activity) setActivities(prev => [activity, ...prev].slice(0, 50));
+      toast.success(activity?.message);
+    });
+    
+    socket.on('user_left', ({ participants: updated, activity }) => {
+      setParticipants(updated);
+      if (activity) setActivities(prev => [activity, ...prev].slice(0, 50));
+    });
+    
+    socket.on('change_video', ({ videoId, activity }) => {
+      setCurrentVideoUrl(`https://www.youtube.com/embed/${videoId}?autoplay=1`);
+      if (activity) setActivities(prev => [activity, ...prev].slice(0, 50));
+      toast.success('Video changed!');
+    });
+    
+    socket.on('error', ({ message }) => {
+      toast.error(message);
+    });
+    
+    // CLEANUP - DO NOT disconnect immediately!
     return () => {
-      clearInterval(seekPollRef.current);
-      if (playerRef.current?.destroy) {
-        playerRef.current.destroy();
-        playerRef.current = null;
+      console.log('🧹 Component unmounting, disconnecting socket');
+      if (socketRef.current) {
+        socketRef.current.disconnect();
       }
     };
-  }, []); // Run once on mount
-
-  // ── Player state change handler ────────────────────────────────────────────
-  // Updated every render so it always has fresh state/refs without recreating player
-  stateChangeHandlerRef.current = useCallback(
-    (e) => {
-      // If this state change was triggered by a remote socket event, ignore it
-      if (isRemoteAction.current) {
-        isRemoteAction.current = false;
-        return;
-      }
-
-      const YT = window.YT;
-      if (!YT) return;
-
-      const player = playerRef.current;
-      if (!player) return;
-
-      if (e.data === YT.PlayerState.PLAYING) {
-        const time = player.getCurrentTime();
-        lastTimeRef.current = time;
-        socketRef.current?.emit('play', { roomId, time });
-
-        // Start polling to detect seeks (time jumps) while playing
-        clearInterval(seekPollRef.current);
-        seekPollRef.current = setInterval(() => {
-          if (!playerRef.current) return;
-          const currentTime = playerRef.current.getCurrentTime();
-          // If time jumped more than 2.5s from where it should be → seek happened
-          const expectedTime = lastTimeRef.current + 1;
-          if (Math.abs(currentTime - expectedTime) > 2.5 && !isRemoteAction.current) {
-            socketRef.current?.emit('seek', { roomId, time: currentTime });
-          }
-          lastTimeRef.current = currentTime;
-        }, 1000);
-      }
-
-      if (e.data === YT.PlayerState.PAUSED) {
-        clearInterval(seekPollRef.current);
-        const time = player.getCurrentTime();
-
-        // If time jumped significantly from last known → it was a seek-then-pause
-        if (Math.abs(time - lastTimeRef.current) > 2.5) {
-          socketRef.current?.emit('seek', { roomId, time });
-        }
-
-        lastTimeRef.current = time;
-        socketRef.current?.emit('pause', { roomId, time });
-      }
-    },
-    [roomId]
-  );
-
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  }, [roomId, username]); // No other dependencies that would cause re-run
 
   const handleChangeVideo = () => {
     if (!newVideoUrl.trim()) {
       toast.error('Please paste a YouTube URL');
       return;
     }
-    const videoId = extractVideoId(newVideoUrl);
-    if (!videoId) {
-      toast.error('Could not recognise that YouTube URL');
+    if (userRole !== 'host' && userRole !== 'moderator') {
+      toast.error('Only hosts can change video');
       return;
     }
-    socketRef.current?.emit('change_video', { roomId, videoId });
-    setNewVideoUrl('');
-  };
-
-  const handleAssignRole = (userId, newRole) => {
-    socketRef.current?.emit('assign_role', { roomId, userId, newRole });
-  };
-
-  const handleRemoveParticipant = (userId, name) => {
-    if (!window.confirm(`Remove ${name} from the room?`)) return;
-    socketRef.current?.emit('remove_participant', { roomId, userId });
+    const videoId = extractVideoId(newVideoUrl);
+    if (videoId) {
+      socketRef.current?.emit('change_video', { roomId, videoId });
+      setNewVideoUrl('');
+    } else {
+      toast.error('Invalid YouTube URL');
+    }
   };
 
   const copyLink = () => {
     navigator.clipboard.writeText(window.location.href);
-    toast.success('Room link copied!');
+    toast.success('Link copied!');
   };
-
-  // ── UI helpers ──────────────────────────────────────────────────────────────
 
   const getRoleIcon = (role) => {
     if (role === 'host') return <FaCrown className="text-yellow-500" />;
-    if (role === 'moderator') return <FaShieldAlt className="text-blue-400" />;
+    if (role === 'moderator') return <FaShieldAlt className="text-blue-500" />;
     return <FaUser className="text-gray-400" />;
   };
 
-  const syncBadge = {
-    synced: 'bg-green-500/20 text-green-400',
-    connecting: 'bg-yellow-500/20 text-yellow-400',
-    disconnected: 'bg-red-500/20 text-red-400',
-  }[syncStatus] || 'bg-gray-500/20 text-gray-400';
-
-  const roleBadge = {
-    host: 'bg-yellow-500/20 text-yellow-500',
-    moderator: 'bg-blue-500/20 text-blue-400',
-  }[userRole] || 'bg-gray-500/20 text-gray-400';
-
   const canControl = userRole === 'host' || userRole === 'moderator';
 
-  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-black">
       <Toaster position="top-right" />
-
-      {/* ── Header ── */}
-      <div className="bg-gray-900/50 backdrop-blur-md border-b border-yellow-500/20 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex justify-between items-center flex-wrap gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-yellow-500">🎬 SyncParty</h1>
-              <p className="text-sm text-gray-400">Room: {roomId}</p>
+      
+      <div className="bg-gray-900/50 border-b border-yellow-500/20 p-4">
+        <div className="container mx-auto flex justify-between items-center flex-wrap gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-yellow-500">🎬 SyncParty</h1>
+            <p className="text-sm text-gray-400">Room: {roomId}</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className={`px-3 py-1 rounded-full text-sm ${
+              syncStatus === 'synced' ? 'bg-green-500/20 text-green-400' : 
+              syncStatus === 'connecting' ? 'bg-yellow-500/20 text-yellow-400' :
+              'bg-red-500/20 text-red-400'
+            }`}>
+              {syncStatus === 'synced' ? '🟢 Synced' : 
+               syncStatus === 'connecting' ? '🟡 Connecting...' : '🔴 Disconnected'}
+            </span>
+            <div className={`px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1 ${
+              userRole === 'host' ? 'bg-yellow-500/20 text-yellow-500' :
+              userRole === 'moderator' ? 'bg-blue-500/20 text-blue-500' : 'bg-gray-500/20 text-gray-400'
+            }`}>
+              {getRoleIcon(userRole)} {userRole === 'loading' ? 'LOADING...' : userRole.toUpperCase()}
             </div>
-
-            <div className="flex items-center gap-3">
-              {/* Sync status */}
-              <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${syncBadge}`}>
-                {syncStatus === 'synced' && <FaCheckCircle />}
-                {syncStatus === 'connecting' && <FaSignal className="animate-pulse" />}
-                {syncStatus === 'disconnected' && <FaExclamationTriangle />}
-                <span className="capitalize">{syncStatus}</span>
-              </div>
-
-              {/* My role */}
-              <div className={`px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1 ${roleBadge}`}>
-                {getRoleIcon(userRole)}
-                <span>{userRole === 'loading' ? 'joining...' : userRole.toUpperCase()}</span>
-              </div>
-
-              <button onClick={copyLink} title="Copy room link"
-                className="text-gray-400 hover:text-yellow-500 transition-colors">
-                <FaCopy size={18} />
-              </button>
-            </div>
+            <button onClick={copyLink} className="text-gray-400 hover:text-yellow-500">
+              <FaCopy size={20} />
+            </button>
           </div>
         </div>
       </div>
 
-      {/* ── Main grid ── */}
       <div className="container mx-auto px-4 py-8">
         <div className="grid lg:grid-cols-3 gap-6">
-
-          {/* ── LEFT: Video + controls ── */}
           <div className="lg:col-span-2 space-y-4">
-
-            {/* ── YouTube Player ── */}
-            {/*
-              IMPORTANT: This div is replaced by the YouTube IFrame API with an <iframe>.
-              Do NOT add a React key here or wrap it in anything that changes — that would
-              destroy and recreate the player, breaking synchronization.
-            */}
-            <div className="bg-black rounded-xl overflow-hidden shadow-2xl aspect-video">
-              <div id="yt-player" style={{ width: '100%', height: '100%' }} />
+            <div className="bg-black rounded-xl overflow-hidden aspect-video">
+              <iframe src={currentVideoUrl} className="w-full h-full" title="YouTube" allowFullScreen />
             </div>
 
-            {/* ── Participant note for viewers ── */}
-            {!canControl && userRole !== 'loading' && (
-              <div className="bg-gray-900/50 rounded-xl p-4 text-center border border-yellow-500/20">
-                <p className="text-gray-400">
-                  👀 You are a <span className="text-yellow-500 font-semibold">participant</span>.
-                  Playback is controlled by the host or moderators.
-                </p>
-              </div>
-            )}
-
-            {/* ── Change video (host/moderator only) ── */}
-            {canControl && (
-              <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-yellow-500/20 space-y-3">
-                <label className="text-gray-300 text-sm font-medium block">🎬 Change Video</label>
+            {canControl ? (
+              <div className="bg-gray-900/50 rounded-xl p-4 border border-yellow-500/20">
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
                     value={newVideoUrl}
                     onChange={(e) => setNewVideoUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleChangeVideo()}
-                    placeholder="Paste any YouTube URL…"
-                    className="flex-1 px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700
-                               focus:border-yellow-500 focus:outline-none"
+                    placeholder="Paste YouTube URL here..."
+                    className="flex-1 px-4 py-3 rounded-lg bg-gray-800 text-white"
+                    onKeyPress={(e) => e.key === 'Enter' && handleChangeVideo()}
                   />
-                  <button
-                    onClick={handleChangeVideo}
-                    className="px-6 py-3 bg-yellow-600 hover:bg-yellow-500 text-black font-semibold
-                               rounded-lg transition-all"
-                  >
-                    Change
+                  <button onClick={handleChangeVideo} className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg">
+                    Change Video
                   </button>
                 </div>
-                <p className="text-xs text-gray-500">
-                  Supports: youtube.com/watch?v=… · youtu.be/… · youtube.com/shorts/…
-                </p>
-
-                {/* Sync hint */}
-                <div className="bg-blue-900/20 border border-blue-500/20 rounded-lg p-3">
-                  <p className="text-xs text-blue-300">
-                    💡 <strong>How sync works:</strong> Use the YouTube player controls normally.
-                    When you press play, pause, or scrub — all participants follow automatically.
-                  </p>
-                </div>
+              </div>
+            ) : userRole !== 'loading' && (
+              <div className="bg-gray-900/50 rounded-xl p-4 text-center">
+                <p className="text-gray-400">👀 You are a participant. Only the host can change videos.</p>
               </div>
             )}
           </div>
 
-          {/* ── RIGHT: Sidebar ── */}
           <div className="space-y-4">
-
-            {/* ── Participants ── */}
-            <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-yellow-500/20">
-              <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                <FaUsers className="text-yellow-500" />
-                Participants ({participants.length})
-              </h3>
-
-              <div className="space-y-2 max-h-72 overflow-y-auto">
-                {participants.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">Waiting for others…</p>
-                ) : (
-                  participants.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center justify-between p-2 bg-gray-800/50 rounded-lg gap-2"
-                    >
-                      {/* Name + role */}
-                      <div className="flex items-center gap-2 min-w-0">
-                        {getRoleIcon(p.role)}
-                        <span className="text-white text-sm truncate">{p.name}</span>
-                        {p.id === mySocketId && (
-                          <span className="text-xs text-gray-500">(you)</span>
-                        )}
-                        <span className={`text-xs px-2 py-0.5 rounded shrink-0 ${
-                          p.role === 'host'
-                            ? 'bg-yellow-500/20 text-yellow-500'
-                            : p.role === 'moderator'
-                            ? 'bg-blue-500/20 text-blue-400'
-                            : 'bg-gray-500/20 text-gray-400'
-                        }`}>
-                          {p.role}
-                        </span>
-                      </div>
-
-                      {/* Host actions — only shown to the host, not on themselves */}
-                      {userRole === 'host' && p.id !== mySocketId && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          {/* Toggle moderator / participant */}
-                          {p.role === 'participant' ? (
-                            <button
-                              onClick={() => handleAssignRole(p.id, 'moderator')}
-                              title="Make moderator"
-                              className="p-1 text-blue-400 hover:text-blue-300 transition-colors"
-                            >
-                              <FaUserShield size={14} />
-                            </button>
-                          ) : p.role === 'moderator' ? (
-                            <button
-                              onClick={() => handleAssignRole(p.id, 'participant')}
-                              title="Demote to participant"
-                              className="p-1 text-gray-400 hover:text-gray-300 transition-colors"
-                            >
-                              <FaUser size={14} />
-                            </button>
-                          ) : null}
-
-                          {/* Remove */}
-                          <button
-                            onClick={() => handleRemoveParticipant(p.id, p.name)}
-                            title="Remove from room"
-                            className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                          >
-                            <FaTrash size={13} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* ── Activity feed ── */}
-            <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4 border border-yellow-500/20">
-              <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                <FaRegClock className="text-yellow-500" />
-                Activity
-              </h3>
-
+            <div className="bg-gray-900/50 rounded-xl p-4 border border-yellow-500/20">
+              <h3 className="text-white font-semibold mb-3">📝 Live Activity</h3>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {activities.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">No activity yet</p>
-                ) : (
-                  activities.map((a) => (
-                    <div
-                      key={a.id}
-                      className="text-sm text-gray-300 p-2 bg-gray-800/50 rounded-lg flex justify-between gap-2"
-                    >
-                      <span>
-                        <span className="text-yellow-500">✦</span> {a.message}
-                      </span>
-                      <span className="text-xs text-gray-500 shrink-0">{a.timestamp}</span>
-                    </div>
-                  ))
-                )}
+                {activities.map((a) => (
+                  <div key={a.id} className="text-sm text-gray-300 p-2 bg-gray-800/50 rounded-lg">
+                    {a.message}
+                    <span className="text-xs text-gray-500 float-right">{a.timestamp}</span>
+                  </div>
+                ))}
               </div>
             </div>
 
+            <div className="bg-gray-900/50 rounded-xl p-4 border border-yellow-500/20">
+              <h3 className="text-white font-semibold mb-3">👥 Participants ({participants.length})</h3>
+              <div className="space-y-2">
+                {participants.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 p-2 bg-gray-800/50 rounded-lg">
+                    {getRoleIcon(p.role)}
+                    <span className="text-white">{p.name}</span>
+                    {p.id === socketRef.current?.id && <span className="text-xs text-gray-400">(You)</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

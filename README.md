@@ -87,4 +87,14 @@ The server validates permissions before broadcasting any playback event.
 
 ## Live URL
 
-<!-- Add your deployed URL here -->
+- **Frontend:** https://youtube-watch-party-gcut.vercel.app
+- **Backend:** https://youtube-watch-party-backend-tfdz.onrender.com
+
+## How to Test
+
+1. Open the frontend URL
+2. Enter your name
+3. Click "Create New Room"
+4. Share the room URL with friends
+5. Paste any YouTube URL and click "Change Video"
+6. Everyone in the room watches together in sync!

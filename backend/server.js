@@ -27,27 +27,35 @@ const io = new Server(server, {
 });
 
 io.on('connection', (socket) => {
-  console.log('Connected: ' + socket.id);
+  console.log('✅ Connected: ' + socket.id);
 
+  // ─── CHAT MESSAGE EVENT - FIXED ─────────────────────────────────
   socket.on('chat_message', ({ roomId, message, username }) => {
+    console.log('💬 [BACKEND] Chat message received:', { roomId, message, username });
+    
     const room = roomManager.getRoom(roomId);
-    if (!room) return;
-
+    if (!room) {
+      console.log('❌ [BACKEND] Room not found:', roomId);
+      return;
+    }
+    
     const chatMessage = {
       id: Date.now() + Math.random(),
       username: username,
-      message: message.substring(0, 500),
+      message: message.substring(0, 200),
       timestamp: new Date().toLocaleTimeString(),
-      isHost: room.participants.get(socket.id)
-        ? room.participants.get(socket.id).role === 'host'
-        : false,
+      isHost: room.participants.get(socket.id)?.role === 'host'
     };
-
-    room.chatMessages = room.chatMessages || [];
+    
+    // Store messages in room
+    if (!room.chatMessages) room.chatMessages = [];
     room.chatMessages.push(chatMessage);
-    if (room.chatMessages.length > 200) room.chatMessages.shift();
-
+    if (room.chatMessages.length > 100) room.chatMessages.shift();
+    
+    // Broadcast to EVERYONE including sender
+    console.log('💬 [BACKEND] Broadcasting to room:', roomId);
     io.to(roomId).emit('chat_message', chatMessage);
+    console.log('💬 [BACKEND] Broadcast complete');
   });
 
   socket.on('typing_start', ({ roomId, username }) => {
@@ -69,13 +77,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join_room', ({ roomId, username }) => {
-    console.log(username + ' joining: ' + roomId);
+    console.log('📥 ' + username + ' joining: ' + roomId);
 
     let room = roomManager.getRoom(roomId);
 
     if (!room) {
       room = roomManager.createRoom(roomId, socket.id, username);
-      console.log('Room created: ' + roomId);
+      console.log('✨ Room created: ' + roomId);
     } else {
       roomManager.joinRoom(roomId, socket.id, username);
     }
@@ -114,7 +122,7 @@ io.on('connection', (socket) => {
 
     io.to(roomId).emit('participants_updated', room.getParticipantsList());
 
-    console.log('Room ' + roomId + ': ' + room.participants.size + ' participants');
+    console.log('👥 Room ' + roomId + ': ' + room.participants.size + ' participants');
   });
 
   socket.on('play', ({ roomId, time }) => {
@@ -220,7 +228,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('Disconnected: ' + socket.id);
+    console.log('❌ Disconnected: ' + socket.id);
 
     const result = roomManager.leaveRoom(socket.id);
     if (!result) return;
@@ -232,7 +240,7 @@ io.on('connection', (socket) => {
     if (!user) return;
 
     if (!room) {
-      console.log('Room deleted (empty)');
+      console.log('🗑️ Room deleted (empty)');
       return;
     }
 
@@ -261,6 +269,6 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, function () {
-  console.log('Server running on http://localhost:' + PORT);
-  console.log('Accepting connections from: ' + FRONTEND_URL);
+  console.log('🚀 Server running on http://localhost:' + PORT);
+  console.log('📡 Accepting connections from: ' + FRONTEND_URL);
 });

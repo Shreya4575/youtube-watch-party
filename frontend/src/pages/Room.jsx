@@ -212,13 +212,32 @@ function Room() {
   const copyLink = () => { navigator.clipboard.writeText(window.location.href); toast.success('Room link copied!'); };
 
   const sendMessage = () => {
-    const msg = newMessage.trim();
-    if (!msg) return;
-    if (!socketRef.current) { toast.error('Not connected'); return; }
-    socketRef.current.emit('chat_message', { roomId, message: msg, username });
-    socketRef.current.emit('typing_stop', { roomId });
+    console.log('🔵🔵🔵 SEND MESSAGE CLICKED 🔵🔵🔵');
+    console.log('Message:', newMessage);
+    console.log('Socket connected?', socketRef.current ? 'YES' : 'NO');
+    console.log('Room ID:', roomId);
+    console.log('Username:', username);
+
+    if (!newMessage.trim()) {
+      toast.error('Type a message');
+      return;
+    }
+
+    if (!socketRef.current) {
+      toast.error('Not connected to server');
+      return;
+    }
+
+    // Emit message
+    socketRef.current.emit('chat_message', {
+      roomId,
+      message: newMessage.trim(),
+      username
+    });
+    console.log('📤 Message emitted to backend');
+
+    // Clear input
     setNewMessage('');
-    clearTimeout(typingTimerRef.current);
   };
 
   const handleTyping = (e) => {
@@ -346,7 +365,7 @@ function Room() {
     </div>
   );
 
-  return (
+   return (
     <div className="min-h-screen bg-black flex flex-col">
       <Toaster position="top-right" toastOptions={{ style: { background: '#1f2937', color: '#fff', border: '1px solid #374151' } }} />
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
@@ -439,6 +458,25 @@ function Room() {
           </div>
 
           <div className="w-80 flex flex-col gap-4 overflow-hidden">
+            <button
+              onClick={() => {
+                console.log('🧪 TEST: Manual message');
+                if (socketRef.current) {
+                  socketRef.current.emit('chat_message', {
+                    roomId,
+                    message: '🧪 TEST from debug button',
+                    username: 'DEBUG'
+                  });
+                  console.log('✅ Test sent!');
+                } else {
+                  console.log('❌ Socket not connected');
+                }
+              }}
+              className="bg-yellow-600/50 hover:bg-yellow-600 text-white px-3 py-2 rounded-lg text-xs"
+            >
+              🧪 TEST SEND MESSAGE
+            </button>
+
             <div className="flex-1 min-h-0">
               <ChatPanel />
             </div>
@@ -533,5 +571,4 @@ function Room() {
     </div>
   );
 }
-
 export default Room;
